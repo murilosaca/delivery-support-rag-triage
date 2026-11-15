@@ -51,6 +51,8 @@ Vector Database: ChromaDB (persistência local)
 
 Os embeddings usam `client.models.embed_content` com `text-embedding-004`. Esse modelo foi desligado em 14 de janeiro de 2026. Se a API recusar a chamada, o serviço passa a usar `gemini-embedding-001` e grava o modelo efetivo em `chroma_db/.embedding_model`, junto do índice, para não misturar vetores de modelos diferentes nas consultas seguintes. Enquanto o marcador existir, ingestão e busca usam só esse modelo. `EMBEDDING_MODEL` e `EMBEDDING_MODEL_FALLBACK` alteram os dois identificadores sem mudar o código.
 
+A geração segue a mesma ideia. A triagem chama primeiro `gemini-2.5-flash`. Para contas novas, a API pode recusar esse modelo e indicar `gemini-3.8-flash`. O processo então usa o substituto nas decisões seguintes. `GEMINI_MODEL` e `GEMINI_MODEL_FALLBACK` alteram esses nomes.
+
 Cache & Infraestrutura: Redis 7, Docker, Docker Compose
 
 Qualidade & Evals: Suíte automatizada de testes de grounding e adversarial prompts
@@ -169,6 +171,8 @@ Vector Database: ChromaDB (local persistence)
 ### Embedding fallback
 
 Embeddings are requested with `client.models.embed_content` and `text-embedding-004`. That model was shut down on January 14, 2026. If the API rejects the call, the service switches to `gemini-embedding-001` and writes the effective model to `chroma_db/.embedding_model`, next to the index, so later queries do not mix vectors from different models. As long as that marker exists, ingest and search stay on the same model. `EMBEDDING_MODEL` and `EMBEDDING_MODEL_FALLBACK` change both identifiers without a code change.
+
+Generation follows the same pattern. Triage calls `gemini-2.5-flash` first. For new accounts the API can reject that model and point to `gemini-3.8-flash`. The process then uses the replacement for later decisions. `GEMINI_MODEL` and `GEMINI_MODEL_FALLBACK` change those names.
 
 Caching & Infrastructure: Redis 7, Docker, Docker Compose
 

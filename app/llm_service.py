@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Protocol, Sequence
 
 from google import genai
@@ -236,6 +237,31 @@ def _strip_json_fence(text: str) -> str:
     return stripped.strip()
 
 
+def _is_transient(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("503", "unavailable", "504", "deadline", "high demand", "try again")
+    )
+
+
+def _is_model_unavailable(exc: Exception) -> bool:
+    text = str(exc).lower()
+    if any(marker in text for marker in ("api key", "unauthenticated", "permission denied")):
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "not found",
+            "not_found",
+            "404",
+            "no longer available",
+            "not available",
+            "deprecated",
+        )
+    )
+
+
 def _is_config_rejected(exc: Exception) -> bool:
     text = str(exc).lower()
     if any(marker in text for marker in ("not found", "not_found", "api key", "unauthenticated")):
@@ -268,6 +294,10 @@ class LLMService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._client: genai.Client | None = None
+        self._active_model = settings.gemini_model
+        self._model_pinned = False
+        self._primary_unavailable = False
+        self._logged_model_fallback = False
 
     def _client_or_raise(self) -> genai.Client:
         if not self._settings.gemini_api_key:
@@ -311,7 +341,49 @@ class LLMService:
             self._settings.max_automatic_refund_brl,
         )
 
+    def _models_to_try(self) -> list[str]:
+        if self._model_pinned:
+            return [self._active_model]
+        if self._primary_unavailable and self._settings.gemini_model_fallback:
+            return [self._settings.gemini_model_fallback]
+        models = [self._settings.gemini_model]
+        fallback = self._settings.gemini_model_fallback
+        if fallback and fallback not in models:
+            models.append(fallback)
+        return models
+
     def _generate(self, prompt: str) -> Any:
+        models = self._models_to_try()
+        last_error: Exception | None = None
+        for model in models:
+            try:
+                response = self._generate_with_config_fallback(prompt, model)
+            except LLMServiceError as exc:
+                last_error = exc
+                if model != models[-1] and _is_model_unavailable(exc):
+                    logger.warning(
+                        "Generation model %s is unavailable: %s",
+                        model,
+                        _truncate_error(exc),
+                    )
+                    self._primary_unavailable = True
+                    continue
+                raise
+            if model != self._settings.gemini_model and not self._logged_model_fallback:
+                logger.warning(
+                    "Using fallback generation model %s because %s is unavailable",
+                    model,
+                    self._settings.gemini_model,
+                )
+                self._logged_model_fallback = True
+            self._active_model = model
+            self._model_pinned = True
+            return response
+        raise LLMServiceError(
+            f"No generation model is available. Last error: {_truncate_error(last_error) if last_error else 'unknown'}"
+        )
+
+    def _generate_with_config_fallback(self, prompt: str, model: str) -> Any:
         attempts = (
             {"thinking": True, "seed": True, "candidate_count": True},
             {"thinking": False, "seed": False, "candidate_count": False},
@@ -320,7 +392,7 @@ class LLMService:
         last_error: Exception | None = None
         for options in attempts:
             try:
-                return self._generate_once(prompt, **options)
+                return self._generate_once(prompt, model, **options)
             except LLMServiceError:
                 raise
             except Exception as exc:
@@ -337,6 +409,7 @@ class LLMService:
     def _generate_once(
         self,
         prompt: str,
+        model: str,
         *,
         thinking: bool,
         seed: bool,
@@ -356,15 +429,36 @@ class LLMService:
         if candidate_count:
             config_kwargs["candidate_count"] = 1
         if thinking and hasattr(types, "ThinkingConfig"):
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-        try:
-            return self._client_or_raise().models.generate_content(
-                model=self._settings.gemini_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(**config_kwargs),
-            )
-        except TypeError as exc:
-            raise LLMServiceError(f"Gemini SDK rejected the request config: {exc}") from exc
+            if "gemini-2.5" in model:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+            elif hasattr(types, "ThinkingLevel"):
+                config_kwargs["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel.LOW
+                )
+        last_error: Exception | None = None
+        for attempt in range(3):
+            if attempt:
+                time.sleep(1.5 * attempt)
+            try:
+                return self._client_or_raise().models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**config_kwargs),
+                )
+            except TypeError as exc:
+                raise LLMServiceError(f"Gemini SDK rejected the request config: {exc}") from exc
+            except Exception as exc:
+                last_error = exc
+                if not _is_transient(exc):
+                    raise
+                logger.warning(
+                    "Gemini returned a transient error on attempt %s: %s",
+                    attempt + 1,
+                    _truncate_error(exc),
+                )
+        if last_error is not None:
+            raise last_error
+        raise LLMServiceError("Gemini generation failed without an error")
 
 
 def _parse_decision(response: object) -> LLMTriageDecision:

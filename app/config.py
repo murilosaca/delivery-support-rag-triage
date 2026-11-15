@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = Field(default=3600, ge=1)
 
     gemini_model: str = "gemini-2.5-flash"
+    gemini_model_fallback: str = "gemini-3.8-flash"
     embedding_model: str = "text-embedding-004"
     embedding_model_fallback: str = "gemini-embedding-001"
     gemini_timeout_ms: int = Field(default=90_000, ge=1_000)
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
         "redis_url",
         "chroma_persist_dir",
         "gemini_model",
+        "gemini_model_fallback",
         "embedding_model",
         "embedding_model_fallback",
         mode="before",

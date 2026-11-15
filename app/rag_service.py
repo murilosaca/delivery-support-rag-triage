@@ -135,6 +135,7 @@ class RAGService:
         self._genai: genai.Client | None = None
         self._active_embedding_model = settings.embedding_model
         self._model_pinned = False
+        self._logged_embedding_fallback = False
         stored_model = self._read_model_marker()
         if stored_model:
             self._active_embedding_model = stored_model
@@ -295,12 +296,13 @@ class RAGService:
                     raise RAGServiceError(f"Embedding request failed: {_truncate_error(exc)}") from exc
                 logger.warning("Embedding model %s is unavailable: %s", model, _truncate_error(exc))
                 continue
-            if model != self._settings.embedding_model:
+            if model != self._settings.embedding_model and not self._logged_embedding_fallback:
                 logger.warning(
                     "Using fallback embedding model %s because %s is unavailable",
                     model,
                     self._settings.embedding_model,
                 )
+                self._logged_embedding_fallback = True
             self._active_embedding_model = model
             self._model_pinned = True
             return vectors
