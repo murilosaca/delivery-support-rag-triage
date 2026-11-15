@@ -22,6 +22,9 @@ O projeto resolve desafios reais de engenharia de Inteligência Artificial Gener
   (Cache Miss)
        ▼
 [RAG Service (ChromaDB + text-embedding-004)] ──► Recupera Top-K Políticas Internas
+       │                 │
+       │                 └── se a API recusar o modelo: gemini-embedding-001
+       │                     (modelo gravado junto do índice)
        │
        ▼
 [LLM Service (gemini-2.5-flash + System Guardrails + Pydantic Schema)]
@@ -40,9 +43,13 @@ Observabilidade de Latência: Medição em milissegundos (latency_ms) por requis
 Stack Tecnológica
 Linguagem & Framework: Python 3.11+, FastAPI, Uvicorn, Pydantic v2
 
-IA & Embeddings: Google GenAI SDK (gemini-2.5-flash, text-embedding-004)
+IA & Embeddings: Google GenAI SDK (gemini-2.5-flash, text-embedding-004, fallback gemini-embedding-001)
 
 Vector Database: ChromaDB (persistência local)
+
+### Fallback de embeddings
+
+Os embeddings usam `client.models.embed_content` com `text-embedding-004`. Esse modelo foi desligado em 14 de janeiro de 2026. Se a API recusar a chamada, o serviço passa a usar `gemini-embedding-001` e grava o modelo efetivo em `chroma_db/.embedding_model`, junto do índice, para não misturar vetores de modelos diferentes nas consultas seguintes. Enquanto o marcador existir, ingestão e busca usam só esse modelo. `EMBEDDING_MODEL` e `EMBEDDING_MODEL_FALLBACK` alteram os dois identificadores sem mudar o código.
 
 Cache & Infraestrutura: Redis 7, Docker, Docker Compose
 
@@ -134,6 +141,9 @@ Plaintext
   (Cache Miss)
        ▼
 [RAG Service (ChromaDB + text-embedding-004)] ──► Retrieves Top-K Internal Policies
+       │                 │
+       │                 └── if the API rejects the model: gemini-embedding-001
+       │                     (model id stored with the index)
        │
        ▼
 [LLM Service (gemini-2.5-flash + System Guardrails + Pydantic Schema)]
@@ -152,9 +162,13 @@ Latency Observability: Per-request execution tracking (latency_ms) to monitor se
 Tech Stack
 Language & Framework: Python 3.11+, FastAPI, Uvicorn, Pydantic v2
 
-AI & Embeddings: Google GenAI SDK (gemini-2.5-flash, text-embedding-004)
+AI & Embeddings: Google GenAI SDK (gemini-2.5-flash, text-embedding-004, fallback gemini-embedding-001)
 
 Vector Database: ChromaDB (local persistence)
+
+### Embedding fallback
+
+Embeddings are requested with `client.models.embed_content` and `text-embedding-004`. That model was shut down on January 14, 2026. If the API rejects the call, the service switches to `gemini-embedding-001` and writes the effective model to `chroma_db/.embedding_model`, next to the index, so later queries do not mix vectors from different models. As long as that marker exists, ingest and search stay on the same model. `EMBEDDING_MODEL` and `EMBEDDING_MODEL_FALLBACK` change both identifiers without a code change.
 
 Caching & Infrastructure: Redis 7, Docker, Docker Compose
 
